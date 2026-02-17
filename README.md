@@ -106,6 +106,7 @@ docker sweep containers
 docker sweep images
 docker sweep volumes
 docker sweep networks
+docker sweep update --check
 ```
 
 ## Podman

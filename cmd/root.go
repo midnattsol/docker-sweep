@@ -10,6 +10,7 @@ import (
 	"github.com/midnattsol/docker-sweep/internal/docker"
 	"github.com/midnattsol/docker-sweep/internal/sweep"
 	"github.com/midnattsol/docker-sweep/internal/ui"
+	"github.com/midnattsol/docker-sweep/internal/update"
 )
 
 var (
@@ -70,6 +71,7 @@ Resources with the label sweep.protect=true are never deleted.`,
 	cmd.AddCommand(NewImagesCmd())
 	cmd.AddCommand(NewVolumesCmd())
 	cmd.AddCommand(NewNetworksCmd())
+	cmd.AddCommand(NewUpdateCmd())
 
 	return cmd
 }
@@ -113,6 +115,8 @@ func buildConfig() (*config.Config, error) {
 }
 
 func Execute(version string) {
+	update.CurrentVersion = version
+
 	if err := NewRootCmd(version).Execute(); err != nil {
 		os.Exit(1)
 	}
