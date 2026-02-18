@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/midnattsol/docker-sweep/compare/v0.1.0...v0.2.0) (2026-02-18)
+
+
+### Features
+
+* improve interactive sweep flow ([6042f2a](https://github.com/midnattsol/docker-sweep/commit/6042f2ae7ad30fc976e6548aafb37ab625d3eaeb))
+
 ## [0.1.0](https://github.com/midnattsol/docker-sweep/compare/v0.1.0...v0.1.0) (2026-02-17)
 
 
