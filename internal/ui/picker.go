@@ -18,18 +18,38 @@ type PickerItem struct {
 
 // PickerModel is a bubbletea model for multi-select
 type PickerModel struct {
-	items      []PickerItem
-	cursor     int
-	scrollTop  int
-	termWidth  int
-	termHeight int
-	quitting   bool
-	confirmed  bool
-	totalSize  int64
+	items                []PickerItem
+	cursor               int
+	scrollTop            int
+	termWidth            int
+	termHeight           int
+	quitting             bool
+	confirmed            bool
+	toggleDangling       bool
+	enableDanglingToggle bool
+	showDangling         bool
+	totalSize            int64
+}
+
+type PickerAction int
+
+const (
+	PickerActionCancel PickerAction = iota
+	PickerActionConfirm
+	PickerActionToggleDangling
+)
+
+type PickerOptions struct {
+	EnableDanglingToggle bool
+	ShowDangling         bool
 }
 
 // NewPicker creates a new picker from sweep results
 func NewPicker(result *sweep.Result) PickerModel {
+	return NewPickerWithOptions(result, PickerOptions{})
+}
+
+func NewPickerWithOptions(result *sweep.Result, opts PickerOptions) PickerModel {
 	var items []PickerItem
 
 	// Add containers
@@ -72,7 +92,11 @@ func NewPicker(result *sweep.Result) PickerModel {
 		})
 	}
 
-	m := PickerModel{items: items}
+	m := PickerModel{
+		items:                items,
+		enableDanglingToggle: opts.EnableDanglingToggle,
+		showDangling:         opts.ShowDangling,
+	}
 	m.updateTotalSize()
 	return m
 }
@@ -103,6 +127,12 @@ func (m PickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+
+		case "d":
+			if m.enableDanglingToggle {
+				m.toggleDangling = true
+				return m, tea.Quit
+			}
 
 		case "enter":
 			m.confirmed = true
@@ -215,15 +245,27 @@ func (m PickerModel) View() string {
 	// Footer with help and stats
 	b.WriteString(fmt.Sprintf("\n  %s\n", Divider(60)))
 
-	help := RenderHelp([][2]string{
+	helpItems := [][2]string{
 		{"␣", "toggle"},
 		{"pgup/pgdn", "scroll"},
 		{"a", "all"},
 		{"s", "suggested"},
 		{"↵", "confirm"},
 		{"q", "quit"},
-	})
+	}
+	if m.enableDanglingToggle {
+		helpItems = append(helpItems, [2]string{"d", "dangling"})
+	}
+	help := RenderHelp(helpItems)
 	b.WriteString(fmt.Sprintf("  %s\n", help))
+
+	if m.enableDanglingToggle {
+		state := "hidden"
+		if m.showDangling {
+			state = "visible"
+		}
+		b.WriteString(fmt.Sprintf("  %s\n", MutedStyle.Render("Dangling images: "+state+" (press d to toggle)")))
+	}
 
 	// Show space to recover
 	if m.totalSize > 0 {
@@ -513,6 +555,10 @@ func (m PickerModel) Cancelled() bool {
 	return m.quitting
 }
 
+func (m PickerModel) ToggleDanglingRequested() bool {
+	return m.toggleDangling
+}
+
 // SelectedResources returns the selected resources
 func (m PickerModel) SelectedResources() []sweep.Resource {
 	var selected []sweep.Resource
@@ -526,18 +572,33 @@ func (m PickerModel) SelectedResources() []sweep.Resource {
 
 // RunPicker runs the interactive picker and returns selected resources
 func RunPicker(result *sweep.Result) ([]sweep.Resource, error) {
-	m := NewPicker(result)
+	selected, action, err := RunPickerWithOptions(result, PickerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if action == PickerActionCancel {
+		return nil, nil
+	}
+	return selected, nil
+}
+
+func RunPickerWithOptions(result *sweep.Result, opts PickerOptions) ([]sweep.Resource, PickerAction, error) {
+	m := NewPickerWithOptions(result, opts)
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()
 	if err != nil {
-		return nil, err
+		return nil, PickerActionCancel, err
 	}
 
 	fm := finalModel.(PickerModel)
 	if fm.Cancelled() {
-		return nil, nil // User cancelled
+		return nil, PickerActionCancel, nil
 	}
 
-	return fm.SelectedResources(), nil
+	if fm.ToggleDanglingRequested() {
+		return nil, PickerActionToggleDangling, nil
+	}
+
+	return fm.SelectedResources(), PickerActionConfirm, nil
 }

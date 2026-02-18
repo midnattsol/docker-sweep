@@ -39,6 +39,12 @@ Interactive mode:
 docker sweep
 ```
 
+In the picker:
+
+- press `d` to toggle dangling images visibility without restarting
+- after deleting, the picker stays open so you can continue cleaning
+- exit explicitly with `q` or `Ctrl+C`
+
 Delete suggested resources without interaction:
 
 ```bash

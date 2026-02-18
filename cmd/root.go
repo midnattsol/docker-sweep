@@ -154,12 +154,130 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	fmt.Print(ui.RenderHeader())
 
-	// Analyze all resources
-	ms := ui.NewMultiSpinner()
+	if flagYes || flagGC {
+		result, err := analyzeRootResources(cfg, analyzeContainers, analyzeImages, analyzeVolumes, analyzeNetworks)
+		if err != nil {
+			if err.Error() == "cancelled" {
+				return nil
+			}
+			fmt.Print(ui.RenderError(err.Error()))
+			return err
+		}
 
+		if result.IsEmpty() {
+			fmt.Print(ui.RenderNoResources())
+			return nil
+		}
+
+		toDelete := result.Suggested()
+		if len(toDelete) == 0 {
+			fmt.Print(ui.RenderNoResources())
+			return nil
+		}
+
+		if flagDryRun {
+			fmt.Print(ui.RenderDryRun(toDelete))
+			return nil
+		}
+
+		var deleted int
+		var errors []error
+		if err := ui.RunWithSpinner("Deleting selected resources...", func() error {
+			deleted, errors = sweep.DeleteResources(toDelete)
+			return nil
+		}); err != nil {
+			if err.Error() == "cancelled" {
+				return nil
+			}
+			fmt.Print(ui.RenderError(err.Error()))
+			return err
+		}
+
+		for _, err := range errors {
+			fmt.Printf("  %s\n", ui.RenderErrorInline(err.Error()))
+		}
+
+		fmt.Print(ui.RenderSummary(deleted, len(toDelete)))
+		return nil
+	}
+
+	if !ui.IsTTY() {
+		err := fmt.Errorf("interactive mode requires a terminal; use --yes to delete suggested resources")
+		fmt.Print(ui.RenderError(err.Error()))
+		return err
+	}
+
+	showDangling := !cfg.NoDangling
+	enableDanglingToggle := analyzeImages && !flagDangling
+
+	for {
+		result, err := analyzeRootResources(cfg, analyzeContainers, analyzeImages, analyzeVolumes, analyzeNetworks)
+		if err != nil {
+			if err.Error() == "cancelled" {
+				return nil
+			}
+			fmt.Print(ui.RenderError(err.Error()))
+			return err
+		}
+
+		if result.IsEmpty() {
+			fmt.Print(ui.RenderNoResources())
+			return nil
+		}
+
+		toDelete, action, err := ui.RunPickerWithOptions(result, ui.PickerOptions{
+			EnableDanglingToggle: enableDanglingToggle,
+			ShowDangling:         showDangling,
+		})
+		if err != nil {
+			fmt.Print(ui.RenderError(err.Error()))
+			return err
+		}
+
+		switch action {
+		case ui.PickerActionCancel:
+			return nil
+		case ui.PickerActionToggleDangling:
+			showDangling = !showDangling
+			cfg.NoDangling = !showDangling
+			continue
+		}
+
+		if len(toDelete) == 0 {
+			continue
+		}
+
+		if flagDryRun {
+			fmt.Print(ui.RenderDryRun(toDelete))
+			return nil
+		}
+
+		var deleted int
+		var errors []error
+		if err := ui.RunWithSpinner("Deleting selected resources...", func() error {
+			deleted, errors = sweep.DeleteResources(toDelete)
+			return nil
+		}); err != nil {
+			if err.Error() == "cancelled" {
+				return nil
+			}
+			fmt.Print(ui.RenderError(err.Error()))
+			return err
+		}
+
+		for _, err := range errors {
+			fmt.Printf("  %s\n", ui.RenderErrorInline(err.Error()))
+		}
+
+		fmt.Print(ui.RenderSummary(deleted, len(toDelete)))
+	}
+}
+
+func analyzeRootResources(cfg *config.Config, includeContainers, includeImages, includeVolumes, includeNetworks bool) (*sweep.Result, error) {
+	ms := ui.NewMultiSpinner()
 	result := &sweep.Result{}
 
-	if analyzeContainers {
+	if includeContainers {
 		ms.Add("Analyzing containers...", func() error {
 			containers, err := sweep.AnalyzeContainersWithConfig(cfg)
 			if err != nil {
@@ -170,7 +288,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if analyzeImages {
+	if includeImages {
 		ms.Add("Analyzing images...", func() error {
 			images, err := sweep.AnalyzeImagesWithConfig(cfg)
 			if err != nil {
@@ -181,7 +299,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if analyzeVolumes {
+	if includeVolumes {
 		ms.Add("Analyzing volumes...", func() error {
 			volumes, err := sweep.AnalyzeVolumesWithConfig(cfg)
 			if err != nil {
@@ -192,7 +310,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if analyzeNetworks {
+	if includeNetworks {
 		ms.Add("Analyzing networks...", func() error {
 			networks, err := sweep.AnalyzeNetworksWithConfig(cfg)
 			if err != nil {
@@ -204,76 +322,10 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ms.Run(); err != nil {
-		if err.Error() == "cancelled" {
-			return nil
-		}
-		fmt.Print(ui.RenderError(err.Error()))
-		return err
+		return nil, err
 	}
 
-	// Check if there's anything to clean
-	if result.IsEmpty() {
-		fmt.Print(ui.RenderNoResources())
-		return nil
-	}
-
-	var toDelete []sweep.Resource
-
-	if flagYes || flagGC {
-		// Non-interactive: delete all suggested
-		toDelete = result.Suggested()
-	} else {
-		if !ui.IsTTY() {
-			err := fmt.Errorf("interactive mode requires a terminal; use --yes to delete suggested resources")
-			fmt.Print(ui.RenderError(err.Error()))
-			return err
-		}
-
-		// Interactive picker
-		var err error
-		toDelete, err = ui.RunPicker(result)
-		if err != nil {
-			fmt.Print(ui.RenderError(err.Error()))
-			return err
-		}
-
-		if toDelete == nil {
-			// User cancelled
-			return nil
-		}
-	}
-
-	if len(toDelete) == 0 {
-		fmt.Print(ui.RenderNoResources())
-		return nil
-	}
-
-	if flagDryRun {
-		fmt.Print(ui.RenderDryRun(toDelete))
-		return nil
-	}
-
-	var deleted int
-	var errors []error
-	if err := ui.RunWithSpinner("Deleting selected resources...", func() error {
-		deleted, errors = sweep.DeleteResources(toDelete)
-		return nil
-	}); err != nil {
-		if err.Error() == "cancelled" {
-			return nil
-		}
-		fmt.Print(ui.RenderError(err.Error()))
-		return err
-	}
-
-	// Show errors if any
-	for _, err := range errors {
-		fmt.Printf("  %s\n", ui.RenderErrorInline(err.Error()))
-	}
-
-	fmt.Print(ui.RenderSummary(deleted, len(toDelete)))
-
-	return nil
+	return result, nil
 }
 
 func validateTypeSpecificFlags(includeContainers, includeImages, includeVolumes, includeNetworks bool) error {
